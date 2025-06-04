@@ -408,7 +408,34 @@ logger = logging.getLogger(__name__)
 @app.on_event("startup")
 async def startup_event():
     await init_demo_accounts()
+    await setup_telegram_webhook()
     logger.info("Telegram Bot Server started")
+
+async def setup_telegram_webhook():
+    """Setup Telegram webhook"""
+    try:
+        # Get the webhook URL from environment or construct it
+        webhook_url = f"{os.environ.get('REACT_APP_BACKEND_URL', 'https://a0d1a663-69dc-4dcc-a21b-359c9ef7a2c3.preview.emergentagent.com')}/api/telegram-webhook"
+        
+        # Set the webhook
+        await bot.set_webhook(url=webhook_url)
+        logger.info(f"Telegram webhook set to: {webhook_url}")
+        
+        # Get webhook info to verify
+        webhook_info = await bot.get_webhook_info()
+        logger.info(f"Webhook info: {webhook_info}")
+        
+    except Exception as e:
+        logger.error(f"Failed to set Telegram webhook: {e}")
+
+# Add endpoint to manually set webhook
+@api_router.post("/set-webhook")
+async def set_webhook_endpoint():
+    try:
+        await setup_telegram_webhook()
+        return {"status": "success", "message": "Webhook set successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to set webhook: {str(e)}")
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
