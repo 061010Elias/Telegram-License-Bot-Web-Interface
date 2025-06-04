@@ -8,12 +8,14 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 import httpx
 import asyncio
 from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application
 import json
+import secrets
+import string
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -37,47 +39,35 @@ class User(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     telegram_id: int
     username: Optional[str] = None
-    credits: int = 0
+    is_active: bool = True
+    is_banned: bool = False
+    license_key: Optional[str] = None
+    license_expires: Optional[datetime] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     last_activity: datetime = Field(default_factory=datetime.utcnow)
 
-class UserCreate(BaseModel):
-    telegram_id: int
-    username: Optional[str] = None
+class License(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    license_key: str
+    is_used: bool = False
+    used_by_user_id: Optional[str] = None
+    used_by_telegram_id: Optional[int] = None
+    duration_days: int = 30  # Default 30 days
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    activated_at: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
+    created_by_admin: str = "system"
 
 class Ticket(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     user_id: str
     telegram_id: int
-    type: str  # "support", "payment"
+    type: str  # "purchase", "support"
     status: str = "open"  # "open", "closed"
     message: str
     admin_response: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
-
-class TicketCreate(BaseModel):
-    user_id: str
-    telegram_id: int
-    type: str
-    message: str
-
-class Account(BaseModel):
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    type: str  # "gaming", "streaming", etc.
-    username: str
-    password: str
-    email: Optional[str] = None
-    additional_info: Optional[str] = None
-    is_available: bool = True
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-
-class AccountCreate(BaseModel):
-    type: str
-    username: str
-    password: str
-    email: Optional[str] = None
-    additional_info: Optional[str] = None
 
 class BotActivity(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -87,25 +77,20 @@ class BotActivity(BaseModel):
     message: str
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
+# Request/Response Models
+class LicenseCreate(BaseModel):
+    duration_days: int = 30
+    quantity: int = 1
+
 class AdminAction(BaseModel):
     user_id: str
-    credits_to_add: int
+    action: str  # "ban", "unban", "extend_license"
+    value: Optional[int] = None  # days to extend
 
-# Initialize demo accounts on startup
-async def init_demo_accounts():
-    existing_accounts = await db.accounts.count_documents({})
-    if existing_accounts == 0:
-        demo_accounts = [
-            {"type": "gaming", "username": "gamer_user1", "password": "pass123", "email": "gamer1@example.com", "additional_info": "Steam account", "is_available": True},
-            {"type": "gaming", "username": "gamer_user2", "password": "pass456", "email": "gamer2@example.com", "additional_info": "Epic Games account", "is_available": True},
-            {"type": "streaming", "username": "stream_user1", "password": "stream123", "email": "stream1@example.com", "additional_info": "Netflix account", "is_available": True},
-            {"type": "streaming", "username": "stream_user2", "password": "stream456", "email": "stream2@example.com", "additional_info": "Spotify account", "is_available": True},
-            {"type": "social", "username": "social_user1", "password": "social123", "email": "social1@example.com", "additional_info": "Instagram account", "is_available": True},
-        ]
-        
-        for account_data in demo_accounts:
-            account_obj = Account(**account_data)
-            await db.accounts.insert_one(account_obj.dict())
+# Generate license key
+def generate_license_key():
+    """Generate a unique license key"""
+    return ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(16))
 
 # Log bot activity
 async def log_activity(telegram_id: int, username: str, action: str, message: str):
@@ -131,6 +116,27 @@ async def get_or_create_user(telegram_id: int, username: str = None):
             {"$set": {"last_activity": datetime.utcnow()}}
         )
     return user
+
+# Check if user has valid license
+async def check_user_license(telegram_id: int):
+    user = await db.users.find_one({"telegram_id": telegram_id})
+    if not user:
+        return False, "User not found"
+    
+    if user.get('is_banned', False):
+        return False, "User is banned"
+    
+    if not user.get('license_key'):
+        return False, "No license activated"
+    
+    license_expires = user.get('license_expires')
+    if not license_expires:
+        return False, "License has no expiration date"
+    
+    if datetime.utcnow() > license_expires:
+        return False, "License has expired"
+    
+    return True, "License is valid"
 
 # Telegram webhook handler
 @api_router.post("/telegram-webhook")
@@ -170,11 +176,17 @@ async def handle_message(message):
     
     if text == "/start":
         await send_welcome_message(telegram_id)
+    elif text == "/buy":
+        await handle_buy_request(telegram_id, user['id'])
+    elif text.startswith("/license"):
+        await handle_license_command(telegram_id, text, user)
+    elif text == "/status":
+        await handle_status_request(telegram_id, user)
     else:
-        # Default response for unknown commands
         await bot.send_message(
             chat_id=telegram_id,
-            text="Bot currently in development... ⚠️"
+            text="🤖 **Verfügbare Befehle:**\n\n/start - Bot starten\n/buy - Lizenz kaufen\n/license activate [KEY] - Lizenz aktivieren\n/status - Lizenz-Status prüfen",
+            parse_mode='Markdown'
         )
 
 async def handle_callback_query(callback_query):
@@ -186,168 +198,211 @@ async def handle_callback_query(callback_query):
     # Log activity
     await log_activity(telegram_id, username, "callback", data)
     
-    # Get user
-    user = await get_or_create_user(telegram_id, username)
-    
     await callback_query.answer()
     
-    if data == "confirm_ok":
-        await show_main_menu(telegram_id)
-    elif data == "support":
-        await handle_support_request(telegram_id, user['id'])
-    elif data == "buy":
+    if data == "buy_license":
+        user = await get_or_create_user(telegram_id, username)
         await handle_buy_request(telegram_id, user['id'])
-    elif data == "generate":
-        await handle_generate_account(telegram_id, user)
+    elif data == "check_status":
+        user = await get_or_create_user(telegram_id, username)
+        await handle_status_request(telegram_id, user)
 
 async def send_welcome_message(telegram_id: int):
-    """Send initial welcome message"""
+    """Send welcome message with license system info"""
     keyboard = [
-        [InlineKeyboardButton("OK ✅", callback_data="confirm_ok")]
+        [InlineKeyboardButton("💰 Lizenz kaufen", callback_data="buy_license")],
+        [InlineKeyboardButton("📊 Status prüfen", callback_data="check_status")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await bot.send_message(
-        chat_id=telegram_id,
-        text="Bot currently in development... ⚠️\n\nClick OK to continue:",
-        reply_markup=reply_markup
-    )
+    welcome_text = """🔐 **License System Bot**
 
-async def show_main_menu(telegram_id: int):
-    """Show main menu with buttons"""
-    keyboard = [
-        [InlineKeyboardButton("🎫 Einmaliger Support", callback_data="support")],
-        [InlineKeyboardButton("💰 Buy Credits", callback_data="buy")],
-        [InlineKeyboardButton("🎮 Generate Account", callback_data="generate")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+Willkommen! Dieser Bot verwaltet Lizenzen.
+
+**Verfügbare Befehle:**
+• `/buy` - Lizenz-Kauf anfragen
+• `/license activate [KEY]` - Lizenz aktivieren
+• `/status` - Lizenz-Status prüfen
+
+Wählen Sie eine Option:"""
     
     await bot.send_message(
         chat_id=telegram_id,
-        text="Wählen Sie eine Option:",
-        reply_markup=reply_markup
-    )
-
-async def handle_support_request(telegram_id: int, user_id: str):
-    """Handle support ticket creation"""
-    ticket = Ticket(
-        user_id=user_id,
-        telegram_id=telegram_id,
-        type="support",
-        message="Einmaliger Support angefordert"
-    )
-    await db.tickets.insert_one(ticket.dict())
-    
-    await bot.send_message(
-        chat_id=telegram_id,
-        text="✅ Support-Ticket erstellt! Ein Administrator wird sich bald bei Ihnen melden."
+        text=welcome_text,
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
     )
 
 async def handle_buy_request(telegram_id: int, user_id: str):
-    """Handle buy/payment request"""
+    """Handle license purchase request"""
     ticket = Ticket(
         user_id=user_id,
         telegram_id=telegram_id,
-        type="payment",
-        message="Guthaben-Aufladung angefordert (Standard: 10€)"
+        type="purchase",
+        message="Lizenz-Kauf angefordert"
     )
     await db.tickets.insert_one(ticket.dict())
     
     await bot.send_message(
         chat_id=telegram_id,
-        text="💰 Payment-Ticket erstellt!\n\nStandard: 10€ = 10 Credits\n1€ = 1 Generation\n\nEin Administrator wird sich wegen der Zahlung bei Ihnen melden."
+        text="💰 **Kauf-Anfrage erstellt!**\n\nIhr Ticket wurde erstellt. Ein Administrator wird sich bezüglich des Kaufs bei Ihnen melden.\n\n**Ticket-ID:** `{}`".format(ticket.id),
+        parse_mode='Markdown'
     )
 
-async def handle_generate_account(telegram_id: int, user: dict):
-    """Handle account generation"""
-    if user['credits'] <= 0:
+async def handle_license_command(telegram_id: int, text: str, user: dict):
+    """Handle license activation command"""
+    parts = text.split()
+    
+    if len(parts) < 3 or parts[1] != "activate":
         await bot.send_message(
             chat_id=telegram_id,
-            text="❌ Nicht genügend Guthaben! Sie benötigen mindestens 1 Credit.\n\nVerwenden Sie 'Buy Credits' um Guthaben aufzuladen."
+            text="❌ **Ungültiger Befehl**\n\nVerwenden Sie: `/license activate [LIZENZ-KEY]`",
+            parse_mode='Markdown'
         )
         return
     
-    # Find available account
-    account = await db.accounts.find_one({"is_available": True})
-    if not account:
+    license_key = parts[2]
+    
+    # Check if license exists and is unused
+    license_doc = await db.licenses.find_one({"license_key": license_key, "is_used": False})
+    if not license_doc:
         await bot.send_message(
             chat_id=telegram_id,
-            text="❌ Keine Accounts verfügbar! Versuchen Sie es später noch einmal."
+            text="❌ **Ungültiger Lizenz-Key**\n\nDieser Lizenz-Key ist ungültig oder bereits verwendet.",
+            parse_mode='Markdown'
         )
         return
     
-    # Update account availability and user credits
-    await db.accounts.update_one(
-        {"id": account['id']},
-        {"$set": {"is_available": False}}
+    # Activate license
+    expires_at = datetime.utcnow() + timedelta(days=license_doc['duration_days'])
+    
+    # Update license
+    await db.licenses.update_one(
+        {"license_key": license_key},
+        {
+            "$set": {
+                "is_used": True,
+                "used_by_user_id": user['id'],
+                "used_by_telegram_id": telegram_id,
+                "activated_at": datetime.utcnow(),
+                "expires_at": expires_at
+            }
+        }
     )
     
+    # Update user
     await db.users.update_one(
         {"telegram_id": telegram_id},
-        {"$inc": {"credits": -1}}
+        {
+            "$set": {
+                "license_key": license_key,
+                "license_expires": expires_at,
+                "is_active": True
+            }
+        }
     )
-    
-    # Send account details
-    account_text = f"""🎮 **Account Generated!**
-
-**Type:** {account['type']}
-**Username:** `{account['username']}`
-**Password:** `{account['password']}`
-**Email:** {account.get('email', 'N/A')}
-**Info:** {account.get('additional_info', 'N/A')}
-
-**Remaining Credits:** {user['credits'] - 1}"""
     
     await bot.send_message(
         chat_id=telegram_id,
-        text=account_text,
+        text=f"✅ **Lizenz aktiviert!**\n\n🔑 **Key:** `{license_key}`\n📅 **Gültig bis:** {expires_at.strftime('%d.%m.%Y %H:%M')} UTC\n⏰ **Dauer:** {license_doc['duration_days']} Tage",
+        parse_mode='Markdown'
+    )
+
+async def handle_status_request(telegram_id: int, user: dict):
+    """Handle status check request"""
+    is_valid, message = await check_user_license(telegram_id)
+    
+    if is_valid:
+        license_expires = user.get('license_expires')
+        remaining_time = license_expires - datetime.utcnow()
+        remaining_days = remaining_time.days
+        
+        status_text = f"""✅ **Lizenz-Status: AKTIV**
+
+🔑 **Key:** `{user.get('license_key', 'N/A')}`
+📅 **Läuft ab:** {license_expires.strftime('%d.%m.%Y %H:%M')} UTC
+⏰ **Verbleibend:** {remaining_days} Tage
+👤 **Benutzer:** @{user.get('username', 'N/A')}"""
+    else:
+        status_text = f"""❌ **Lizenz-Status: INAKTIV**
+
+**Grund:** {message}
+
+Verwenden Sie `/buy` um eine Lizenz zu kaufen."""
+    
+    await bot.send_message(
+        chat_id=telegram_id,
+        text=status_text,
         parse_mode='Markdown'
     )
 
 # API Routes
 @api_router.get("/")
 async def root():
-    return {"message": "Telegram Bot API Server"}
+    return {"message": "License System API Server"}
 
 @api_router.get("/users", response_model=List[User])
 async def get_users():
-    users = await db.users.find().to_list(1000)
+    users = await db.users.find().sort("created_at", -1).to_list(1000)
     return [User(**user) for user in users]
+
+@api_router.get("/licenses", response_model=List[License])
+async def get_licenses():
+    licenses = await db.licenses.find().sort("created_at", -1).to_list(1000)
+    return [License(**license) for license in licenses]
 
 @api_router.get("/tickets", response_model=List[Ticket])
 async def get_tickets():
     tickets = await db.tickets.find().sort("created_at", -1).to_list(1000)
     return [Ticket(**ticket) for ticket in tickets]
 
-@api_router.get("/accounts", response_model=List[Account])
-async def get_accounts():
-    accounts = await db.accounts.find().to_list(1000)
-    return [Account(**account) for account in accounts]
-
 @api_router.get("/activities", response_model=List[BotActivity])
 async def get_activities():
     activities = await db.bot_activities.find().sort("timestamp", -1).limit(100).to_list(100)
     return [BotActivity(**activity) for activity in activities]
 
-@api_router.post("/admin/add-credits")
-async def add_credits(action: AdminAction):
-    result = await db.users.update_one(
-        {"id": action.user_id},
-        {"$inc": {"credits": action.credits_to_add}}
-    )
+@api_router.post("/admin/create-licenses")
+async def create_licenses(license_data: LicenseCreate):
+    created_licenses = []
     
-    if result.modified_count == 0:
+    for _ in range(license_data.quantity):
+        license_key = generate_license_key()
+        license_obj = License(
+            license_key=license_key,
+            duration_days=license_data.duration_days
+        )
+        await db.licenses.insert_one(license_obj.dict())
+        created_licenses.append(license_obj)
+    
+    return {
+        "message": f"Created {license_data.quantity} licenses",
+        "licenses": [{"key": lic.license_key, "duration": lic.duration_days} for lic in created_licenses]
+    }
+
+@api_router.post("/admin/user-action")
+async def perform_user_action(action: AdminAction):
+    user = await db.users.find_one({"id": action.user_id})
+    if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
-    return {"message": f"Added {action.credits_to_add} credits to user"}
-
-@api_router.post("/admin/send-message")
-async def send_admin_message(telegram_id: int, message: str):
-    try:
-        await bot.send_message(chat_id=telegram_id, text=message)
-        return {"status": "success"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    update_data = {}
+    
+    if action.action == "ban":
+        update_data["is_banned"] = True
+        update_data["is_active"] = False
+    elif action.action == "unban":
+        update_data["is_banned"] = False
+        update_data["is_active"] = True
+    elif action.action == "extend_license":
+        if user.get('license_expires'):
+            new_expiry = user['license_expires'] + timedelta(days=action.value or 30)
+            update_data["license_expires"] = new_expiry
+        else:
+            raise HTTPException(status_code=400, detail="User has no active license to extend")
+    
+    await db.users.update_one({"id": action.user_id}, {"$set": update_data})
+    
+    return {"message": f"Action '{action.action}' performed on user"}
 
 @api_router.post("/admin/respond-ticket/{ticket_id}")
 async def respond_to_ticket(ticket_id: str, response: str):
@@ -381,11 +436,27 @@ async def respond_to_ticket(ticket_id: str, response: str):
     
     return {"message": "Ticket response sent"}
 
-@api_router.post("/accounts", response_model=Account)
-async def create_account(account: AccountCreate):
-    account_obj = Account(**account.dict())
-    await db.accounts.insert_one(account_obj.dict())
-    return account_obj
+async def setup_telegram_webhook():
+    """Setup Telegram webhook"""
+    try:
+        # First check if bot token is valid
+        bot_info = await bot.get_me()
+        logger.info(f"Bot info: {bot_info}")
+        
+        # Get the webhook URL
+        webhook_url = f"{os.environ.get('REACT_APP_BACKEND_URL', 'https://a0d1a663-69dc-4dcc-a21b-359c9ef7a2c3.preview.emergentagent.com')}/api/telegram-webhook"
+        
+        # Set the webhook
+        await bot.set_webhook(url=webhook_url)
+        logger.info(f"Telegram webhook set to: {webhook_url}")
+        
+        # Get webhook info to verify
+        webhook_info = await bot.get_webhook_info()
+        logger.info(f"Webhook info: {webhook_info}")
+        
+    except Exception as e:
+        logger.error(f"Failed to set Telegram webhook: {e}")
+        logger.info("Continuing startup without webhook")
 
 # Include the router in the main app
 app.include_router(api_router)
@@ -407,50 +478,8 @@ logger = logging.getLogger(__name__)
 
 @app.on_event("startup")
 async def startup_event():
-    await init_demo_accounts()
     await setup_telegram_webhook()
-    logger.info("Telegram Bot Server started")
-
-async def setup_telegram_webhook():
-    """Setup Telegram webhook"""
-    try:
-        # First check if bot token is valid
-        bot_info = await bot.get_me()
-        logger.info(f"Bot info: {bot_info}")
-        
-        # Get the webhook URL from environment or construct it
-        webhook_url = f"{os.environ.get('REACT_APP_BACKEND_URL', 'https://a0d1a663-69dc-4dcc-a21b-359c9ef7a2c3.preview.emergentagent.com')}/api/telegram-webhook"
-        
-        # Set the webhook
-        await bot.set_webhook(url=webhook_url)
-        logger.info(f"Telegram webhook set to: {webhook_url}")
-        
-        # Get webhook info to verify
-        webhook_info = await bot.get_webhook_info()
-        logger.info(f"Webhook info: {webhook_info}")
-        
-    except Exception as e:
-        logger.error(f"Failed to set Telegram webhook: {e}")
-        # Continue startup even if webhook fails
-        logger.info("Continuing startup without webhook - bot will work in polling mode for testing")
-
-# Add endpoint to test bot and manually set webhook
-@api_router.get("/bot-info")
-async def get_bot_info():
-    try:
-        bot_info = await bot.get_me()
-        return {"status": "success", "bot_info": bot_info.to_dict()}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get bot info: {str(e)}")
-
-# Add endpoint to manually set webhook
-@api_router.post("/set-webhook")
-async def set_webhook_endpoint():
-    try:
-        await setup_telegram_webhook()
-        return {"status": "success", "message": "Webhook set successfully"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to set webhook: {str(e)}")
+    logger.info("License System Server started")
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
