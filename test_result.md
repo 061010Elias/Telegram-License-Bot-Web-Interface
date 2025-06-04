@@ -210,10 +210,9 @@ metadata:
 
 test_plan:
   current_focus:
-    - "Telegram Bot API Integration"
-    - "Database Models and API Endpoints"
-    - "Admin Functions"
     - "Dark Mode Dashboard"
+    - "Real-time Monitoring"
+    - "Admin Controls"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
