@@ -14,6 +14,15 @@ function App() {
   const [executions, setExecutions] = useState([]);
   const [loading, setLoading] = useState(false);
 
+  // License creation form state
+  const [licenseForm, setLicenseForm] = useState({
+    days: '',
+    hours: '',
+    minutes: '',
+    quantity: 1,
+    maxExecutions: -1
+  });
+
   // Fetch data functions
   const fetchUsers = async () => {
     try {
@@ -60,7 +69,42 @@ function App() {
     }
   };
 
-  const createLicenses = async (duration, quantity, maxExecutions = -1) => {
+  const deleteUser = async (userId) => {
+    if (window.confirm('Benutzer wirklich löschen? Dies kann nicht rückgängig gemacht werden.')) {
+      try {
+        await axios.delete(`${API}/admin/user/${userId}`);
+        fetchUsers();
+        alert('Benutzer gelöscht!');
+      } catch (error) {
+        console.error('Error deleting user:', error);
+        alert('Fehler beim Löschen des Benutzers');
+      }
+    }
+  };
+
+  const clearLogs = async (type) => {
+    if (window.confirm(`Alle ${type} wirklich löschen?`)) {
+      try {
+        await axios.delete(`${API}/admin/clear-logs/${type}`);
+        if (type === 'activities') fetchActivities();
+        if (type === 'executions') fetchExecutions();
+        alert(`${type} gelöscht!`);
+      } catch (error) {
+        console.error('Error clearing logs:', error);
+        alert('Fehler beim Löschen der Logs');
+      }
+    }
+  };
+
+  const calculateDurationDays = () => {
+    const days = parseInt(licenseForm.days) || 0;
+    const hours = parseInt(licenseForm.hours) || 0;
+    const minutes = parseInt(licenseForm.minutes) || 0;
+    
+    return days + (hours / 24) + (minutes / 1440);
+  };
+
+  const createLicenses = async (duration, quantity = 1, maxExecutions = -1) => {
     try {
       const response = await axios.post(`${API}/admin/create-licenses`, {
         duration_days: duration,
@@ -68,12 +112,22 @@ function App() {
         max_executions: maxExecutions
       });
       fetchLicenses();
-      alert(`${quantity} Lizenzen erstellt!`);
+      alert(`${quantity} Lizenz(en) erstellt!`);
       return response.data;
     } catch (error) {
       console.error('Error creating licenses:', error);
       alert('Fehler beim Erstellen der Lizenzen');
     }
+  };
+
+  const createCustomLicenses = () => {
+    const duration = calculateDurationDays();
+    if (duration <= 0) {
+      alert('Bitte geben Sie eine gültige Dauer ein.');
+      return;
+    }
+    createLicenses(duration, licenseForm.quantity, licenseForm.maxExecutions);
+    setLicenseForm({ days: '', hours: '', minutes: '', quantity: 1, maxExecutions: -1 });
   };
 
   const performUserAction = async (userId, action, value = null) => {
@@ -150,10 +204,111 @@ function App() {
     
     const days = Math.floor(diff / (1000 * 60 * 60 * 24));
     const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
     
     if (days > 0) return `${days}d ${hours}h`;
-    return `${hours}h`;
+    if (hours > 0) return `${hours}h ${minutes}m`;
+    return `${minutes}m`;
   };
+
+  // Help Component
+  const Help = () => (
+    <div className="space-y-6">
+      <div className="bg-gray-800 p-6 rounded-lg border border-gray-700">
+        <h3 className="text-xl font-semibold text-white mb-4">System Documentation</h3>
+        
+        <div className="space-y-6">
+          <div>
+            <h4 className="text-lg font-medium text-white mb-2">User Status Types</h4>
+            <div className="space-y-2">
+              <div className="bg-gray-700 p-3 rounded">
+                <div className="flex items-center space-x-3">
+                  <span className="px-2 py-1 rounded text-xs font-medium bg-green-600 text-green-100">Aktiv</span>
+                  <span className="text-gray-300">User has valid license and can use the system</span>
+                </div>
+              </div>
+              <div className="bg-gray-700 p-3 rounded">
+                <div className="flex items-center space-x-3">
+                  <span className="px-2 py-1 rounded text-xs font-medium bg-red-600 text-red-100">Banned</span>
+                  <span className="text-gray-300">User is permanently blocked from using the system</span>
+                </div>
+              </div>
+              <div className="bg-gray-700 p-3 rounded">
+                <div className="flex items-center space-x-3">
+                  <span className="px-2 py-1 rounded text-xs font-medium bg-orange-600 text-orange-100">Locked</span>
+                  <span className="text-gray-300">User is temporarily locked and can request unlock</span>
+                </div>
+              </div>
+              <div className="bg-gray-700 p-3 rounded">
+                <div className="flex items-center space-x-3">
+                  <span className="px-2 py-1 rounded text-xs font-medium bg-gray-600 text-gray-100">Inaktiv</span>
+                  <span className="text-gray-300">User has no valid license</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <h4 className="text-lg font-medium text-white mb-2">Admin Actions</h4>
+            <div className="space-y-2">
+              <div className="bg-gray-700 p-3 rounded">
+                <div className="font-medium text-white">Ban/Unban</div>
+                <div className="text-gray-300 text-sm">Permanently block or unblock a user from the system</div>
+              </div>
+              <div className="bg-gray-700 p-3 rounded">
+                <div className="font-medium text-white">Lock/Unlock</div>
+                <div className="text-gray-300 text-sm">Temporarily restrict user access. User can request unlock via ticket</div>
+              </div>
+              <div className="bg-gray-700 p-3 rounded">
+                <div className="font-medium text-white">Reset License</div>
+                <div className="text-gray-300 text-sm">Remove user's current license and reset execution counter</div>
+              </div>
+              <div className="bg-gray-700 p-3 rounded">
+                <div className="font-medium text-white">Extend License</div>
+                <div className="text-gray-300 text-sm">Add additional time to existing license</div>
+              </div>
+              <div className="bg-gray-700 p-3 rounded">
+                <div className="font-medium text-white">Delete User</div>
+                <div className="text-gray-300 text-sm">Permanently remove user and all associated data</div>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <h4 className="text-lg font-medium text-white mb-2">License System</h4>
+            <div className="space-y-2">
+              <div className="bg-gray-700 p-3 rounded">
+                <div className="font-medium text-white">Duration</div>
+                <div className="text-gray-300 text-sm">Set license validity in days, hours, and minutes</div>
+              </div>
+              <div className="bg-gray-700 p-3 rounded">
+                <div className="font-medium text-white">Max Executions</div>
+                <div className="text-gray-300 text-sm">Limit how many times user can run the program (-1 = unlimited)</div>
+              </div>
+              <div className="bg-gray-700 p-3 rounded">
+                <div className="font-medium text-white">License States</div>
+                <div className="text-gray-300 text-sm">Available, Used, Reset - tracks license lifecycle</div>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <h4 className="text-lg font-medium text-white mb-2">Bot Commands</h4>
+            <div className="bg-gray-700 p-3 rounded">
+              <div className="font-mono text-sm space-y-1">
+                <div><span className="text-blue-400">/start</span> - Smart start (license check → program or purchase options)</div>
+                <div><span className="text-blue-400">/buy</span> - Request license purchase</div>
+                <div><span className="text-blue-400">/license activate [KEY]</span> - Activate license with key</div>
+                <div><span className="text-blue-400">/status</span> - Check license status and remaining time</div>
+                <div><span className="text-blue-400">/unlock</span> - Request account unlock</div>
+                <div><span className="text-blue-400">/help</span> - Show available commands</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 
   // Dashboard Component
   const Dashboard = () => {
@@ -166,38 +321,46 @@ function App() {
 
     return (
       <div className="space-y-6">
-        <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
           <div className="bg-gray-800 p-4 rounded-lg border border-gray-700">
-            <h3 className="text-xs font-medium text-gray-400">Aktive Benutzer</h3>
+            <h3 className="text-xs font-medium text-gray-400">Active Users</h3>
             <p className="text-xl font-bold text-green-400">{activeUsers.length}</p>
           </div>
           <div className="bg-gray-800 p-4 rounded-lg border border-gray-700">
-            <h3 className="text-xs font-medium text-gray-400">Abgelaufene</h3>
+            <h3 className="text-xs font-medium text-gray-400">Expired</h3>
             <p className="text-xl font-bold text-red-400">{expiredUsers.length}</p>
           </div>
           <div className="bg-gray-800 p-4 rounded-lg border border-gray-700">
-            <h3 className="text-xs font-medium text-gray-400">Gesperrt</h3>
+            <h3 className="text-xs font-medium text-gray-400">Banned</h3>
             <p className="text-xl font-bold text-yellow-400">{bannedUsers.length}</p>
           </div>
           <div className="bg-gray-800 p-4 rounded-lg border border-gray-700">
-            <h3 className="text-xs font-medium text-gray-400">Gesperrt (Lock)</h3>
+            <h3 className="text-xs font-medium text-gray-400">Locked</h3>
             <p className="text-xl font-bold text-orange-400">{lockedUsers.length}</p>
           </div>
           <div className="bg-gray-800 p-4 rounded-lg border border-gray-700">
-            <h3 className="text-xs font-medium text-gray-400">Verfügbare Lizenzen</h3>
+            <h3 className="text-xs font-medium text-gray-400">Available Licenses</h3>
             <p className="text-xl font-bold text-blue-400">{unusedLicenses.length}</p>
           </div>
           <div className="bg-gray-800 p-4 rounded-lg border border-gray-700">
-            <h3 className="text-xs font-medium text-gray-400">Offene Tickets</h3>
+            <h3 className="text-xs font-medium text-gray-400">Open Tickets</h3>
             <p className="text-xl font-bold text-purple-400">{openTickets.length}</p>
           </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="bg-gray-800 p-6 rounded-lg border border-gray-700">
-            <h3 className="text-lg font-semibold text-white mb-4">🔍 Bot-Aktivitäten</h3>
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-semibold text-white">Bot Activities</h3>
+              <button
+                onClick={() => clearLogs('activities')}
+                className="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded text-sm"
+              >
+                Clear Logs
+              </button>
+            </div>
             <div className="max-h-80 overflow-y-auto">
-              {activities.slice(0, 10).map((activity, index) => (
+              {activities.slice(0, 15).map((activity, index) => (
                 <div key={index} className="border-b border-gray-700 py-2 last:border-b-0">
                   <div className="flex justify-between items-start">
                     <div>
@@ -216,14 +379,22 @@ function App() {
           </div>
 
           <div className="bg-gray-800 p-6 rounded-lg border border-gray-700">
-            <h3 className="text-lg font-semibold text-white mb-4">🚀 Script-Ausführungen</h3>
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-semibold text-white">Script Executions</h3>
+              <button
+                onClick={() => clearLogs('executions')}
+                className="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded text-sm"
+              >
+                Clear Logs
+              </button>
+            </div>
             <div className="max-h-80 overflow-y-auto">
-              {executions.slice(0, 10).map((execution, index) => (
+              {executions.slice(0, 15).map((execution, index) => (
                 <div key={index} className="border-b border-gray-700 py-2 last:border-b-0">
                   <div className="flex justify-between items-start">
                     <div>
                       <p className="text-white text-sm font-medium">
-                        User ID: {execution.telegram_id}
+                        User: {execution.telegram_id}
                       </p>
                       <p className="text-gray-400 text-xs">
                         Status: <span className={execution.status === 'success' ? 'text-green-400' : 'text-red-400'}>
@@ -247,7 +418,7 @@ function App() {
   // Users Component
   const Users = () => (
     <div className="bg-gray-800 p-6 rounded-lg border border-gray-700">
-      <h3 className="text-lg font-semibold text-white mb-4">👥 Erweiterte Benutzer-Verwaltung</h3>
+      <h3 className="text-lg font-semibold text-white mb-4">User Management</h3>
       <div className="overflow-x-auto">
         <table className="w-full text-sm text-left">
           <thead className="text-xs text-gray-400 uppercase bg-gray-700">
@@ -255,11 +426,11 @@ function App() {
               <th className="px-4 py-3">Telegram ID</th>
               <th className="px-4 py-3">Name</th>
               <th className="px-4 py-3">Status</th>
-              <th className="px-4 py-3">Lizenz</th>
-              <th className="px-4 py-3">Verbleibend</th>
-              <th className="px-4 py-3">Ausführungen</th>
-              <th className="px-4 py-3">Letzter Login</th>
-              <th className="px-4 py-3">Aktionen</th>
+              <th className="px-4 py-3">License</th>
+              <th className="px-4 py-3">Remaining</th>
+              <th className="px-4 py-3">Executions</th>
+              <th className="px-4 py-3">Last Login</th>
+              <th className="px-4 py-3">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -275,22 +446,20 @@ function App() {
                   </div>
                 </td>
                 <td className="px-4 py-4">
-                  <div className="flex flex-col space-y-1">
-                    <span className={`px-2 py-1 rounded text-xs font-medium ${
-                      user.is_banned 
-                        ? 'bg-red-600 text-red-100' 
-                        : user.is_locked
-                        ? 'bg-orange-600 text-orange-100'
-                        : user.is_active
-                        ? 'bg-green-600 text-green-100'
-                        : 'bg-gray-600 text-gray-100'
-                    }`}>
-                      {user.is_banned ? 'Gesperrt' : user.is_locked ? 'Locked' : user.is_active ? 'Aktiv' : 'Inaktiv'}
-                    </span>
-                  </div>
+                  <span className={`px-2 py-1 rounded text-xs font-medium ${
+                    user.is_banned 
+                      ? 'bg-red-600 text-red-100' 
+                      : user.is_locked
+                      ? 'bg-orange-600 text-orange-100'
+                      : user.is_active
+                      ? 'bg-green-600 text-green-100'
+                      : 'bg-gray-600 text-gray-100'
+                  }`}>
+                    {user.is_banned ? 'Banned' : user.is_locked ? 'Locked' : user.is_active ? 'Active' : 'Inactive'}
+                  </span>
                 </td>
                 <td className="px-4 py-4 text-gray-400 font-mono text-xs">
-                  {user.license_key ? user.license_key.substring(0, 8) + '...' : 'Keine'}
+                  {user.license_key ? user.license_key.substring(0, 8) + '...' : 'None'}
                 </td>
                 <td className="px-4 py-4">
                   {user.license_expires ? (
@@ -307,7 +476,7 @@ function App() {
                   {user.script_executions || 0}
                 </td>
                 <td className="px-4 py-4 text-gray-400 text-xs">
-                  {user.last_login ? formatDateTime(user.last_login) : 'Nie'}
+                  {user.last_login ? formatDateTime(user.last_login) : 'Never'}
                 </td>
                 <td className="px-4 py-4">
                   <div className="flex flex-wrap gap-1">
@@ -341,18 +510,18 @@ function App() {
                       <>
                         <button
                           onClick={() => {
-                            const days = prompt('Lizenz um wie viele Tage verlängern?', '30');
+                            const days = prompt('Extend license by how many days?', '30');
                             if (days && !isNaN(days)) {
                               performUserAction(user.id, 'extend_license', parseInt(days));
                             }
                           }}
                           className="bg-purple-600 hover:bg-purple-700 text-white px-2 py-1 rounded text-xs"
                         >
-                          Verlängern
+                          Extend
                         </button>
                         <button
                           onClick={() => {
-                            if (window.confirm('Lizenz wirklich zurücksetzen?')) {
+                            if (window.confirm('Really reset license?')) {
                               performUserAction(user.id, 'reset_license');
                             }
                           }}
@@ -362,6 +531,12 @@ function App() {
                         </button>
                       </>
                     )}
+                    <button
+                      onClick={() => deleteUser(user.id)}
+                      className="bg-red-800 hover:bg-red-900 text-white px-2 py-1 rounded text-xs"
+                    >
+                      Delete
+                    </button>
                   </div>
                 </td>
               </tr>
@@ -376,79 +551,18 @@ function App() {
   const Licenses = () => (
     <div className="space-y-6">
       <div className="bg-gray-800 p-6 rounded-lg border border-gray-700">
-        <h3 className="text-lg font-semibold text-white mb-4">🔑 Lizenz-Erstellung</h3>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <button
-            onClick={() => createLicenses(1, 1)}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded text-sm"
-          >
-            1 Tag (Test)
-          </button>
-          <button
-            onClick={() => createLicenses(7, 1)}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded text-sm"
-          >
-            1 Woche
-          </button>
-          <button
-            onClick={() => createLicenses(30, 1)}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded text-sm"
-          >
-            1 Monat
-          </button>
-          <button
-            onClick={() => createLicenses(90, 1)}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded text-sm"
-          >
-            3 Monate
-          </button>
-          <button
-            onClick={() => createLicenses(30, 5)}
-            className="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded text-sm"
-          >
-            5x Monat
-          </button>
-          <button
-            onClick={() => createLicenses(30, 10)}
-            className="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded text-sm"
-          >
-            10x Monat
-          </button>
-          <button
-            onClick={() => {
-              const duration = prompt('Dauer in Tagen:', '30');
-              const quantity = prompt('Anzahl:', '1');
-              const maxExec = prompt('Max Ausführungen (-1 = unbegrenzt):', '-1');
-              if (duration && quantity && maxExec && !isNaN(duration) && !isNaN(quantity)) {
-                createLicenses(parseInt(duration), parseInt(quantity), parseInt(maxExec));
-              }
-            }}
-            className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded text-sm"
-          >
-            Benutzerdefiniert
-          </button>
-          <button
-            onClick={() => createLicenses(365, 1)}
-            className="bg-yellow-600 hover:bg-yellow-700 text-white px-3 py-2 rounded text-sm"
-          >
-            1 Jahr Premium
-          </button>
-        </div>
-      </div>
-
-      <div className="bg-gray-800 p-6 rounded-lg border border-gray-700">
-        <h3 className="text-lg font-semibold text-white mb-4">📝 Lizenz-Übersicht</h3>
+        <h3 className="text-lg font-semibold text-white mb-4">License Overview</h3>
         <div className="overflow-x-auto">
           <table className="w-full text-sm text-left">
             <thead className="text-xs text-gray-400 uppercase bg-gray-700">
               <tr>
-                <th className="px-4 py-3">Lizenz-Key</th>
+                <th className="px-4 py-3">License Key</th>
                 <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Dauer</th>
-                <th className="px-4 py-3">Max Ausführungen</th>
-                <th className="px-4 py-3">Verwendet von</th>
-                <th className="px-4 py-3">Aktiviert</th>
-                <th className="px-4 py-3">Läuft ab</th>
+                <th className="px-4 py-3">Duration</th>
+                <th className="px-4 py-3">Max Executions</th>
+                <th className="px-4 py-3">Used By</th>
+                <th className="px-4 py-3">Activated</th>
+                <th className="px-4 py-3">Expires</th>
               </tr>
             </thead>
             <tbody>
@@ -463,7 +577,7 @@ function App() {
                         ? 'bg-red-600 text-red-100' 
                         : 'bg-green-600 text-green-100'
                     }`}>
-                      {license.is_reset ? 'Reset' : license.is_used ? 'Verwendet' : 'Verfügbar'}
+                      {license.is_reset ? 'Reset' : license.is_used ? 'Used' : 'Available'}
                     </span>
                   </td>
                   <td className="px-4 py-4 text-gray-400">{license.duration_days}d</td>
@@ -493,13 +607,120 @@ function App() {
           </table>
         </div>
       </div>
+
+      {/* License Creation */}
+      <div className="bg-gray-800 p-6 rounded-lg border border-gray-700">
+        <h3 className="text-lg font-semibold text-white mb-4">Create Licenses</h3>
+        
+        {/* Quick Create Buttons */}
+        <div className="mb-6">
+          <h4 className="text-md font-medium text-white mb-3">Quick Create (Single License)</h4>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <button
+              onClick={() => createLicenses(1)}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded text-sm"
+            >
+              1 Day
+            </button>
+            <button
+              onClick={() => createLicenses(7)}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded text-sm"
+            >
+              1 Week
+            </button>
+            <button
+              onClick={() => createLicenses(30)}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded text-sm"
+            >
+              1 Month
+            </button>
+            <button
+              onClick={() => createLicenses(365)}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded text-sm"
+            >
+              1 Year
+            </button>
+          </div>
+        </div>
+
+        {/* Custom Create Form */}
+        <div>
+          <h4 className="text-md font-medium text-white mb-3">Custom Create</h4>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">Duration</label>
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <input
+                    type="number"
+                    placeholder="Days"
+                    value={licenseForm.days}
+                    onChange={(e) => setLicenseForm({...licenseForm, days: e.target.value})}
+                    className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white text-sm"
+                  />
+                  <label className="text-xs text-gray-400">Days</label>
+                </div>
+                <div>
+                  <input
+                    type="number"
+                    placeholder="Hours"
+                    value={licenseForm.hours}
+                    onChange={(e) => setLicenseForm({...licenseForm, hours: e.target.value})}
+                    className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white text-sm"
+                  />
+                  <label className="text-xs text-gray-400">Hours</label>
+                </div>
+                <div>
+                  <input
+                    type="number"
+                    placeholder="Minutes"
+                    value={licenseForm.minutes}
+                    onChange={(e) => setLicenseForm({...licenseForm, minutes: e.target.value})}
+                    className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white text-sm"
+                  />
+                  <label className="text-xs text-gray-400">Minutes</label>
+                </div>
+              </div>
+            </div>
+            <div>
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-300 mb-2">Quantity</label>
+                <input
+                  type="number"
+                  placeholder="1"
+                  value={licenseForm.quantity}
+                  onChange={(e) => setLicenseForm({...licenseForm, quantity: parseInt(e.target.value)})}
+                  className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Max Executions</label>
+                <input
+                  type="number"
+                  placeholder="-1"
+                  value={licenseForm.maxExecutions}
+                  onChange={(e) => setLicenseForm({...licenseForm, maxExecutions: parseInt(e.target.value)})}
+                  className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white text-sm"
+                />
+                <div className="text-xs text-gray-400 mt-1">-1 = Unlimited</div>
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={createCustomLicenses}
+            className="mt-4 bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded"
+          >
+            Create Custom License(s)
+          </button>
+        </div>
+      </div>
     </div>
   );
 
-  // Tickets Component with Delete
+  // Tickets Component
   const Tickets = () => (
     <div className="bg-gray-800 p-6 rounded-lg border border-gray-700">
-      <h3 className="text-lg font-semibold text-white mb-4">🎫 Support-Tickets & Anfragen</h3>
+      <h3 className="text-lg font-semibold text-white mb-4">Support Tickets</h3>
       <div className="space-y-4">
         {tickets.map((ticket) => (
           <div key={ticket.id} className="bg-gray-700 p-4 rounded-lg border border-gray-600">
@@ -510,7 +731,7 @@ function App() {
                     ? 'bg-yellow-600 text-yellow-100' 
                     : 'bg-green-600 text-green-100'
                 }`}>
-                  {ticket.status === 'open' ? 'Offen' : 'Geschlossen'}
+                  {ticket.status === 'open' ? 'Open' : 'Closed'}
                 </span>
                 <span className={`px-2 py-1 rounded text-xs font-medium ${
                   ticket.type === 'purchase' 
@@ -519,7 +740,7 @@ function App() {
                     ? 'bg-orange-600 text-orange-100'
                     : 'bg-purple-600 text-purple-100'
                 }`}>
-                  {ticket.type === 'purchase' ? 'Kauf' : ticket.type === 'unlock' ? 'Entsperrung' : 'Support'}
+                  {ticket.type === 'purchase' ? 'Purchase' : ticket.type === 'unlock' ? 'Unlock' : 'Support'}
                 </span>
               </div>
               <div className="flex items-center space-x-2">
@@ -530,7 +751,7 @@ function App() {
                   onClick={() => deleteTicket(ticket.id)}
                   className="bg-red-600 hover:bg-red-700 text-white px-2 py-1 rounded text-xs"
                 >
-                  Löschen
+                  Delete
                 </button>
               </div>
             </div>
@@ -540,21 +761,21 @@ function App() {
             <p className="text-gray-300 mb-3">{ticket.message}</p>
             {ticket.admin_response && (
               <div className="bg-gray-600 p-3 rounded mb-3">
-                <p className="text-green-400 font-medium">Admin-Antwort:</p>
+                <p className="text-green-400 font-medium">Admin Response:</p>
                 <p className="text-gray-200">{ticket.admin_response}</p>
               </div>
             )}
             {ticket.status === 'open' && (
               <button
                 onClick={() => {
-                  const response = prompt('Ihre Antwort:');
+                  const response = prompt('Your response:');
                   if (response) {
                     respondToTicket(ticket.id, response);
                   }
                 }}
                 className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded"
               >
-                Antworten
+                Respond
               </button>
             )}
           </div>
@@ -568,8 +789,8 @@ function App() {
       {/* Header */}
       <header className="bg-gray-800 border-b border-gray-700 p-4">
         <div className="max-w-7xl mx-auto">
-          <h1 className="text-2xl font-bold text-white">🔐 Enhanced License System</h1>
-          <p className="text-gray-400">Erweiterte Lizenz-Verwaltung mit Script-Integration</p>
+          <h1 className="text-2xl font-bold text-white">License System</h1>
+          <p className="text-gray-400">Advanced License Management Platform</p>
         </div>
       </header>
 
@@ -577,7 +798,7 @@ function App() {
       <nav className="bg-gray-800 border-b border-gray-700 p-4">
         <div className="max-w-7xl mx-auto">
           <div className="flex space-x-8">
-            {['dashboard', 'users', 'licenses', 'tickets'].map((tab) => (
+            {['dashboard', 'users', 'licenses', 'tickets', 'help'].map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
@@ -587,10 +808,7 @@ function App() {
                     : 'text-gray-400 hover:text-white hover:bg-gray-700'
                 }`}
               >
-                {tab === 'dashboard' && '📊 Dashboard'}
-                {tab === 'users' && '👥 Benutzer'}
-                {tab === 'licenses' && '🔑 Lizenzen'}
-                {tab === 'tickets' && '🎫 Tickets'}
+                {tab.charAt(0).toUpperCase() + tab.slice(1)}
               </button>
             ))}
           </div>
@@ -603,6 +821,7 @@ function App() {
         {activeTab === 'users' && <Users />}
         {activeTab === 'licenses' && <Licenses />}
         {activeTab === 'tickets' && <Tickets />}
+        {activeTab === 'help' && <Help />}
       </main>
 
       {/* Auto-refresh indicator */}
@@ -610,7 +829,7 @@ function App() {
         <div className="bg-gray-800 border border-gray-700 rounded-lg p-3">
           <div className="flex items-center space-x-2">
             <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-            <span className="text-gray-400 text-sm">Live Updates (3s)</span>
+            <span className="text-gray-400 text-sm">Live Updates</span>
           </div>
         </div>
       </div>

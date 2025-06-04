@@ -59,7 +59,7 @@ class License(BaseModel):
     is_used: bool = False
     used_by_user_id: Optional[str] = None
     used_by_telegram_id: Optional[int] = None
-    duration_days: int = 30
+    duration_days: float = 30.0  # Changed to float for hours/minutes support
     max_executions: int = -1  # -1 = unlimited
     executions_used: int = 0
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -98,7 +98,7 @@ class ScriptExecution(BaseModel):
 
 # Request/Response Models
 class LicenseCreate(BaseModel):
-    duration_days: int = 30
+    duration_days: float = 30.0
     quantity: int = 1
     max_executions: int = -1
 
@@ -198,8 +198,8 @@ async def execute_user_script(telegram_id: int, user: dict):
         
         # Send script interface
         keyboard = [
-            [InlineKeyboardButton("✅ OK - Programm starten", callback_data="start_program")],
-            [InlineKeyboardButton("📊 Mein Status", callback_data="my_status")],
+            [InlineKeyboardButton("✅ OK - Start Program", callback_data="start_program")],
+            [InlineKeyboardButton("📊 Status", callback_data="my_status")],
             [InlineKeyboardButton("🚪 Logout", callback_data="logout")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -207,15 +207,16 @@ async def execute_user_script(telegram_id: int, user: dict):
         remaining_time = user.get('license_expires') - datetime.utcnow()
         remaining_days = remaining_time.days
         remaining_hours = remaining_time.seconds // 3600
+        remaining_minutes = (remaining_time.seconds % 3600) // 60
         
-        script_text = f"""🔐 **DEIN PROGRAMM HIER**
+        script_text = f"""**DEIN PROGRAMM HIER**
 
-**Lizenz-Status:** ✅ Aktiv
-**Verbleibend:** {remaining_days} Tage, {remaining_hours} Stunden
-**Ausführungen:** {user.get('script_executions', 0)}
-**Benutzer:** @{user.get('username', 'N/A')}
+**License Status:** Active ✅
+**Remaining:** {remaining_days}d {remaining_hours}h {remaining_minutes}m
+**Executions:** {user.get('script_executions', 0)}
+**User:** @{user.get('username', 'N/A')}
 
-Klicken Sie OK um das Programm zu starten."""
+Click OK to start the program."""
         
         await bot.send_message(
             chat_id=telegram_id,
@@ -321,7 +322,7 @@ async def handle_callback_query(callback_query):
     elif data == "activate_license":
         await bot.send_message(
             chat_id=telegram_id,
-            text="🔑 **Lizenz aktivieren**\n\nVerwenden Sie: `/license activate [IHR-LIZENZ-KEY]`",
+            text="**License Activation**\n\nUse: `/license activate [YOUR-LICENSE-KEY]`",
             parse_mode='Markdown'
         )
 
@@ -337,44 +338,44 @@ async def handle_start_command(telegram_id: int, user: dict):
         if user_data and user_data.get('is_banned'):
             await bot.send_message(
                 chat_id=telegram_id,
-                text="❌ **Ihr Account ist gesperrt**\n\nKontaktieren Sie einen Administrator für weitere Informationen.",
+                text="**Account Banned**\n\nYour account is permanently banned. Contact administrator for more information.",
                 parse_mode='Markdown'
             )
         elif user_data and user_data.get('is_locked'):
             keyboard = [
-                [InlineKeyboardButton("🔓 Entsperrung anfragen", callback_data="request_unlock")]
+                [InlineKeyboardButton("🔓 Request Unlock", callback_data="request_unlock")]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
             await bot.send_message(
                 chat_id=telegram_id,
-                text="🔒 **Ihr Account ist gesperrt**\n\nIhr Account wurde temporär gesperrt. Fordern Sie eine Entsperrung an.",
+                text="**Account Locked**\n\nYour account is temporarily locked. Request unlock to continue.",
                 reply_markup=reply_markup,
                 parse_mode='Markdown'
             )
         else:
             # No license or expired
             keyboard = [
-                [InlineKeyboardButton("💰 Lizenz kaufen", callback_data="buy_license")],
-                [InlineKeyboardButton("🔑 Lizenz aktivieren", callback_data="activate_license")],
-                [InlineKeyboardButton("📊 Status prüfen", callback_data="check_status")]
+                [InlineKeyboardButton("💰 Buy License", callback_data="buy_license")],
+                [InlineKeyboardButton("🔑 Activate License", callback_data="activate_license")],
+                [InlineKeyboardButton("📊 Check Status", callback_data="check_status")]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
-            welcome_text = f"""🔐 **License System**
+            welcome_text = f"""**License System**
 
 **Status:** {message}
 
-**Verfügbare Optionen:**
-• Lizenz kaufen - Neue Lizenz anfordern
-• Lizenz aktivieren - Vorhandenen Key eingeben  
-• Status prüfen - Aktuelle Lizenz-Info
+**Available Options:**
+• Buy License - Request new license
+• Activate License - Enter existing key  
+• Check Status - View current license info
 
-**Befehle:**
-• `/buy` - Lizenz kaufen
-• `/license activate [KEY]` - Lizenz aktivieren
-• `/status` - Status prüfen
-• `/help` - Alle Befehle anzeigen"""
+**Commands:**
+• `/buy` - Buy license
+• `/license activate [KEY]` - Activate license
+• `/status` - Check status
+• `/help` - Show all commands"""
             
             await bot.send_message(
                 chat_id=telegram_id,
@@ -385,23 +386,23 @@ async def handle_start_command(telegram_id: int, user: dict):
 
 async def show_commands(telegram_id: int):
     """Show all available commands"""
-    commands_text = """🤖 **Verfügbare Befehle:**
+    commands_text = """**Available Commands:**
 
-**Basis-Befehle:**
-• `/start` - Bot starten / Programm ausführen
-• `/status` - Lizenz-Status prüfen
-• `/help` - Diese Hilfe anzeigen
+**Basic Commands:**
+• `/start` - Start bot / Execute program
+• `/status` - Check license status
+• `/help` - Show this help
 
-**Lizenz-Befehle:**
-• `/buy` - Lizenz-Kauf anfragen
-• `/license activate [KEY]` - Lizenz aktivieren
+**License Commands:**
+• `/buy` - Request license purchase
+• `/license activate [KEY]` - Activate license
 
-**Support-Befehle:**
-• `/unlock` - Entsperrung anfragen
+**Support Commands:**
+• `/unlock` - Request unlock
 
-**Beispiele:**
-• `/license activate ABC123DEF456` - Lizenz aktivieren
-• `/buy` - Kauf-Ticket erstellen"""
+**Examples:**
+• `/license activate ABC123DEF456` - Activate license
+• `/buy` - Create purchase ticket"""
     
     await bot.send_message(
         chat_id=telegram_id,
@@ -413,7 +414,7 @@ async def handle_program_start(telegram_id: int, user: dict):
     """Handle program start button"""
     await bot.send_message(
         chat_id=telegram_id,
-        text="🚀 **Programm gestartet!**\n\nIhr Programm läuft jetzt...\n\n✅ Erfolgreiche Ausführung\n📊 Script-Zähler wurde aktualisiert",
+        text="**Program Started!**\n\nYour program is now running...\n\n✅ Successful execution\n📊 Script counter updated",
         parse_mode='Markdown'
     )
     
@@ -427,7 +428,7 @@ async def handle_logout(telegram_id: int, user: dict):
     """Handle logout"""
     await bot.send_message(
         chat_id=telegram_id,
-        text="👋 **Logout erfolgreich**\n\nSie wurden abgemeldet. Verwenden Sie `/start` um sich erneut anzumelden.",
+        text="**Logout Successful**\n\nYou have been logged out. Use `/start` to login again.",
         parse_mode='Markdown'
     )
 
@@ -437,13 +438,13 @@ async def handle_unlock_request(telegram_id: int, user_id: str):
         user_id=user_id,
         telegram_id=telegram_id,
         type="unlock",
-        message="Entsperrung des Accounts angefordert"
+        message="Account unlock requested"
     )
     await db.tickets.insert_one(ticket.dict())
     
     await bot.send_message(
         chat_id=telegram_id,
-        text="🔓 **Entsperrung angefordert!**\n\nIhr Entsperrung-Ticket wurde erstellt. Ein Administrator wird sich bei Ihnen melden.",
+        text="**Unlock Requested!**\n\nYour unlock ticket has been created. An administrator will contact you.",
         parse_mode='Markdown'
     )
 
@@ -453,13 +454,13 @@ async def handle_buy_request(telegram_id: int, user_id: str):
         user_id=user_id,
         telegram_id=telegram_id,
         type="purchase",
-        message="Lizenz-Kauf angefordert"
+        message="License purchase requested"
     )
     await db.tickets.insert_one(ticket.dict())
     
     await bot.send_message(
         chat_id=telegram_id,
-        text="💰 **Kauf-Anfrage erstellt!**\n\nIhr Ticket wurde erstellt. Ein Administrator wird sich bezüglich des Kaufs bei Ihnen melden.\n\n**Ticket-ID:** `{}`".format(ticket.id),
+        text="**Purchase Request Created!**\n\nYour ticket has been created. An administrator will contact you regarding the purchase.\n\n**Ticket ID:** `{}`".format(ticket.id),
         parse_mode='Markdown'
     )
 
@@ -470,7 +471,7 @@ async def handle_license_command(telegram_id: int, text: str, user: dict):
     if len(parts) < 3 or parts[1] != "activate":
         await bot.send_message(
             chat_id=telegram_id,
-            text="❌ **Ungültiger Befehl**\n\nVerwenden Sie: `/license activate [LIZENZ-KEY]`\n\nBeispiel: `/license activate ABC123DEF456`",
+            text="**Invalid Command**\n\nUse: `/license activate [LICENSE-KEY]`\n\nExample: `/license activate ABC123DEF456`",
             parse_mode='Markdown'
         )
         return
@@ -482,7 +483,7 @@ async def handle_license_command(telegram_id: int, text: str, user: dict):
     if not license_doc:
         await bot.send_message(
             chat_id=telegram_id,
-            text="❌ **Ungültiger Lizenz-Key**\n\nDieser Lizenz-Key ist ungültig oder bereits verwendet.\n\nVerwenden Sie `/buy` um eine neue Lizenz zu kaufen.",
+            text="**Invalid License Key**\n\nThis license key is invalid or already used.\n\nUse `/buy` to purchase a new license.",
             parse_mode='Markdown'
         )
         return
@@ -519,7 +520,7 @@ async def handle_license_command(telegram_id: int, text: str, user: dict):
     
     await bot.send_message(
         chat_id=telegram_id,
-        text=f"✅ **Lizenz erfolgreich aktiviert!**\n\n🔑 **Key:** `{license_key}`\n📅 **Gültig bis:** {expires_at.strftime('%d.%m.%Y %H:%M')} UTC\n⏰ **Dauer:** {license_doc['duration_days']} Tage\n\n🚀 Verwenden Sie jetzt `/start` um das Programm zu starten!",
+        text=f"**License Successfully Activated!**\n\n🔑 **Key:** `{license_key}`\n📅 **Valid until:** {expires_at.strftime('%d.%m.%Y %H:%M')} UTC\n⏰ **Duration:** {license_doc['duration_days']} days\n\n🚀 Use `/start` now to run the program!",
         parse_mode='Markdown'
     )
 
@@ -532,23 +533,24 @@ async def handle_status_request(telegram_id: int, user: dict):
         remaining_time = license_expires - datetime.utcnow()
         remaining_days = remaining_time.days
         remaining_hours = remaining_time.seconds // 3600
+        remaining_minutes = (remaining_time.seconds % 3600) // 60
         
-        status_text = f"""✅ **Lizenz-Status: AKTIV**
+        status_text = f"""**License Status: ACTIVE**
 
 🔑 **Key:** `{user_data.get('license_key', 'N/A')}`
-📅 **Läuft ab:** {license_expires.strftime('%d.%m.%Y %H:%M')} UTC
-⏰ **Verbleibend:** {remaining_days} Tage, {remaining_hours} Stunden
-📊 **Ausführungen:** {user_data.get('script_executions', 0)}
-👤 **Benutzer:** @{user_data.get('username', 'N/A')}
-🕐 **Letzter Login:** {user_data.get('last_login', 'Nie').strftime('%d.%m.%Y %H:%M') if user_data.get('last_login') else 'Nie'}"""
+📅 **Expires:** {license_expires.strftime('%d.%m.%Y %H:%M')} UTC
+⏰ **Remaining:** {remaining_days}d {remaining_hours}h {remaining_minutes}m
+📊 **Executions:** {user_data.get('script_executions', 0)}
+👤 **User:** @{user_data.get('username', 'N/A')}
+🕐 **Last Login:** {user_data.get('last_login', 'Never').strftime('%d.%m.%Y %H:%M') if user_data.get('last_login') else 'Never'}"""
     else:
-        status_text = f"""❌ **Lizenz-Status: INAKTIV**
+        status_text = f"""**License Status: INACTIVE**
 
-**Grund:** {message}
+**Reason:** {message}
 
-**Aktionen:**
-• `/buy` - Neue Lizenz kaufen
-• `/license activate [KEY]` - Lizenz aktivieren"""
+**Actions:**
+• `/buy` - Buy new license
+• `/license activate [KEY]` - Activate license"""
     
     await bot.send_message(
         chat_id=telegram_id,
@@ -585,6 +587,30 @@ async def get_activities():
 async def get_script_executions():
     executions = await db.script_executions.find().sort("execution_time", -1).limit(100).to_list(100)
     return [ScriptExecution(**execution) for execution in executions]
+
+@api_router.delete("/admin/user/{user_id}")
+async def delete_user(user_id: str):
+    # Delete user and all associated data
+    result = await db.users.delete_one({"id": user_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Delete associated tickets, activities, executions
+    await db.tickets.delete_many({"user_id": user_id})
+    await db.script_executions.delete_many({"user_id": user_id})
+    
+    return {"message": "User and associated data deleted successfully"}
+
+@api_router.delete("/admin/clear-logs/{log_type}")
+async def clear_logs(log_type: str):
+    if log_type == "activities":
+        result = await db.bot_activities.delete_many({})
+        return {"message": f"Cleared {result.deleted_count} activity logs"}
+    elif log_type == "executions":
+        result = await db.script_executions.delete_many({})
+        return {"message": f"Cleared {result.deleted_count} execution logs"}
+    else:
+        raise HTTPException(status_code=400, detail="Invalid log type")
 
 @api_router.post("/admin/create-licenses")
 async def create_licenses(license_data: LicenseCreate):
@@ -670,7 +696,7 @@ async def respond_to_ticket(ticket_id: str, response: str):
     # Get ticket to send message to user
     ticket = await db.tickets.find_one({"id": ticket_id})
     if ticket:
-        message = f"**Antwort auf Ihr Ticket:**\n\n{response}"
+        message = f"**Response to your ticket:**\n\n{response}"
         try:
             await bot.send_message(
                 chat_id=ticket['telegram_id'],
