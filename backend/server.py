@@ -414,6 +414,10 @@ async def startup_event():
 async def setup_telegram_webhook():
     """Setup Telegram webhook"""
     try:
+        # First check if bot token is valid
+        bot_info = await bot.get_me()
+        logger.info(f"Bot info: {bot_info}")
+        
         # Get the webhook URL from environment or construct it
         webhook_url = f"{os.environ.get('REACT_APP_BACKEND_URL', 'https://a0d1a663-69dc-4dcc-a21b-359c9ef7a2c3.preview.emergentagent.com')}/api/telegram-webhook"
         
@@ -427,6 +431,17 @@ async def setup_telegram_webhook():
         
     except Exception as e:
         logger.error(f"Failed to set Telegram webhook: {e}")
+        # Continue startup even if webhook fails
+        logger.info("Continuing startup without webhook - bot will work in polling mode for testing")
+
+# Add endpoint to test bot and manually set webhook
+@api_router.get("/bot-info")
+async def get_bot_info():
+    try:
+        bot_info = await bot.get_me()
+        return {"status": "success", "bot_info": bot_info.to_dict()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get bot info: {str(e)}")
 
 # Add endpoint to manually set webhook
 @api_router.post("/set-webhook")
